@@ -15,6 +15,7 @@
       "workingDir": "Sra",
       "when": ["**/*.razor", "**/*.html", "Sra/tailwind.input.css", "Sra/tailwind.config.js"],
       "output": "Sra/wwwroot/css/app.css",
+      "route": "css/app.css",
       "timeoutSec": 120
     }
   ],
@@ -47,8 +48,8 @@
       "agile-artifacts/**",
       "docs/**"
     ],
-    "cssOnly": ["Sra/tailwind.input.css", "Sra/wwwroot/**"],
-    "cssFastPath": false
+    "cssOnly": ["Sra/tailwind.input.css", "Sra/tailwind.config.js"],
+    "cssFastPath": true
   },
   "browserReload": { "enabled": true },
   "fallbackWatch": {

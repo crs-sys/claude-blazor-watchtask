@@ -44,7 +44,9 @@ public class PipelineCoalescingTests
     private sealed class FakeBroadcaster : IReloadBroadcaster
     {
         public int Broadcasts;
+        public int CssBroadcasts;
         public int Broadcast() { Broadcasts++; return 1; }
+        public int BroadcastCssUpdate(string route, string url) { CssBroadcasts++; return 1; }
     }
 
     private static WatchConfig TestConfig() => new()
@@ -104,6 +106,53 @@ public class PipelineCoalescingTests
 
         Assert.Equal(1, builds.Builds);
         Assert.True(pipeline.LastRoundSkipped);
+    }
+
+    [Fact]
+    public async Task Css_only_round_hot_swaps_without_restart_and_full_round_clears_override()
+    {
+        var config = TestConfig();
+        config.Classify.CssOnly = ["tailwind.input.css"];
+        config.Classify.CssFastPath = true;
+        config.PreBuildSteps =
+        [
+            new WatchConfig.PreBuildStep
+            {
+                Name = "tailwind", Output = "wwwroot/css/app.css", Route = "css/app.css",
+                When = ["tailwind.input.css", "**/*.razor"],
+            },
+        ];
+        var journal = new ChangeJournal(config.RepoRoot);
+        var builds = new FakeBuildRunner();
+        var supervisor = new FakeSupervisor();
+        var broadcaster = new FakeBroadcaster();
+        var overrides = new AssetOverrideStore();
+        var pipeline = new Pipeline(config, journal, new FakeStepRunner(), builds, supervisor, broadcaster,
+            sentinel: null, overrides);
+
+        using var cts = new CancellationTokenSource();
+        var run = pipeline.RunAsync(cts.Token);
+        await DrainRoundsAsync(pipeline, builds, expectedBuilds: 1); // initial full round
+
+        journal.Add(Path.Combine(config.RepoRoot, "tailwind.input.css"));
+        pipeline.Post(new Trigger(TriggerKind.ClaudeStop));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (broadcaster.CssBroadcasts < 1 && DateTime.UtcNow < deadline) await Task.Delay(10);
+
+        Assert.Equal(1, builds.Builds);                 // css round: no dotnet build
+        Assert.Equal(1, supervisor.Starts);             // ...and no restart
+        Assert.Equal(1, broadcaster.CssBroadcasts);
+        Assert.Equal(["css/app.css"], overrides.Routes);
+        Assert.Equal(WatchState.Ready, pipeline.State);
+
+        journal.Add(Path.Combine(config.RepoRoot, "Foo.cs"));
+        pipeline.Post(new Trigger(TriggerKind.ClaudeStop));
+        await DrainRoundsAsync(pipeline, builds, expectedBuilds: 2); // full round
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+
+        Assert.Empty(overrides.Routes);                 // full round cleared the override
+        Assert.Equal(2, supervisor.Starts);
     }
 
     [Fact]

@@ -42,6 +42,13 @@ public sealed class WatchConfig
         /// match the file and browsers get broken/stale CSS — the watcher warns loudly when it happens.
         /// </summary>
         public string? Output { get; set; }
+        /// <summary>
+        /// URL path the app serves the output at (e.g. "css/app.css"). Required for the css fast
+        /// path: css-only rounds serve the fresh file from the watcher at /asset/{route} and tell
+        /// browser tabs to swap their &lt;link&gt; to it (the app can't serve post-build content
+        /// correctly under MapStaticAssets).
+        /// </summary>
+        public string? Route { get; set; }
     }
 
     public sealed class RunConfig : CommandConfig
@@ -137,6 +144,10 @@ public sealed class WatchConfig
                 throw new InvalidOperationException(
                     $"Required environment variable '{name}' is not set (run.requiredEnv).");
         }
+        if (Classify.CssFastPath && !PreBuildSteps.Any(s => s.Output is { Length: > 0 } && s.Route is { Length: > 0 }))
+            throw new InvalidOperationException(
+                "classify.cssFastPath requires at least one preBuildSteps entry with both 'output' and 'route' " +
+                "(the css fast path serves that file from the watcher).");
     }
 
     public string ResolvePath(string relative) => Path.GetFullPath(relative, RepoRoot);

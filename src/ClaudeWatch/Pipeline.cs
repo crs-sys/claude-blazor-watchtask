@@ -16,7 +16,8 @@ public sealed class Pipeline(
     IBuildRunner buildRunner,
     IAppSupervisor supervisor,
     IReloadBroadcaster reloadBroadcaster,
-    AssetSyncSentinel? sentinel = null)
+    AssetSyncSentinel? sentinel = null,
+    AssetOverrideStore? overrides = null)
 {
     private readonly Channel<Trigger> _triggers = Channel.CreateUnbounded<Trigger>();
 
@@ -71,12 +72,30 @@ public sealed class Pipeline(
 
         if (plan.Kind == PlanKind.CssOnly)
         {
-            // Fast path (opt-in via classify.cssFastPath): rebuild CSS, reload browser, no restart
+            // Fast path (opt-in via classify.cssFastPath): rebuild CSS and hot-swap it in open
+            // tabs — no app stop, no build, no restart, circuit stays alive. The app can't serve
+            // the post-build file correctly under MapStaticAssets, so the watcher serves it
+            // (asset override) until the next full round makes file and manifest consistent.
             State = WatchState.Building;
-            if (!await RunMatchingStepsAsync(plan, forceAll: false, ct)) { State = WatchState.BuildFailed; return false; }
+            if (!await RunMatchingStepsAsync(plan, forceAll: false, ct))
+            {
+                // app is still running with pre-round CSS — degraded, not down
+                State = supervisor.IsRunning ? WatchState.Ready : State;
+                Log.Error("css-only round failed — app still running with previous CSS (R to force a full round)");
+                return false;
+            }
+
+            var swapped = 0;
+            foreach (var step in config.PreBuildSteps)
+            {
+                if (step.Output is not { Length: > 0 } output || step.Route is not { Length: > 0 } route) continue;
+                overrides?.Register(route, config.ResolvePath(output));
+                swapped = reloadBroadcaster.BroadcastCssUpdate(route,
+                    $"http://127.0.0.1:{config.Server.Port}/asset/{route.Replace('\\', '/').TrimStart('/')}");
+            }
+            sentinel?.CaptureAfterBuild(); // the rewrite was ours — don't flag it stale
             State = supervisor.IsRunning ? WatchState.Ready : State;
-            var count = reloadBroadcaster.Broadcast();
-            Log.Success($"READY  round {Round} css-only in {roundWatch.Elapsed.TotalSeconds:0.0}s — reload sent ({count} client{(count == 1 ? "" : "s")})");
+            Log.Success($"READY  round {Round} css-only in {roundWatch.Elapsed.TotalSeconds:0.0}s — css hot-swapped ({swapped} client{(swapped == 1 ? "" : "s")}, no restart)");
             return true;
         }
 
@@ -113,6 +132,7 @@ public sealed class Pipeline(
         }
         Log.Detail($"build OK in {build.Duration.TotalSeconds:0.0}s");
         sentinel?.CaptureAfterBuild();
+        overrides?.Clear(); // build refreshed the fingerprints — app-served assets are correct again
 
         State = WatchState.Restarting;
         Log.Detail("starting app...");

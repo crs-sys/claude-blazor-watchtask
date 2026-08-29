@@ -57,8 +57,9 @@ static async Task<int> RunWatcherAsync(Dictionary<string, string> options)
     var reloadService = new BrowserReloadService();
     using var supervisor = new AppSupervisor(config);
     using var sentinel = new AssetSyncSentinel(config);
-    var pipeline = new Pipeline(config, journal, new StepRunner(config), new BuildRunner(config), supervisor, reloadService, sentinel);
-    var server = new TriggerServer(config, journal, pipeline, supervisor, reloadService, sentinel);
+    var overrides = new AssetOverrideStore();
+    var pipeline = new Pipeline(config, journal, new StepRunner(config), new BuildRunner(config), supervisor, reloadService, sentinel, overrides);
+    var server = new TriggerServer(config, journal, pipeline, supervisor, reloadService, sentinel, overrides);
 
     try { await server.StartAsync(shutdown.Token); }
     catch (Exception ex) when (ex is IOException or InvalidOperationException)

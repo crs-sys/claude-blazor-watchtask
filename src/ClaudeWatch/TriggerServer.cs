@@ -19,7 +19,8 @@ public sealed class TriggerServer(
     Pipeline pipeline,
     IAppSupervisor supervisor,
     BrowserReloadService reloadService,
-    AssetSyncSentinel? sentinel = null)
+    AssetSyncSentinel? sentinel = null,
+    AssetOverrideStore? overrides = null)
 {
     private WebApplication? _app;
 
@@ -67,6 +68,21 @@ public sealed class TriggerServer(
             return context.Response.WriteAsync(ReadEmbedded("reload.js"), context.RequestAborted);
         });
 
+        // Fresh copies of files rewritten by css-only rounds — the app can't serve them
+        // correctly under MapStaticAssets until the next build. Registered routes only.
+        app.MapGet("/asset/{**route}", async (HttpContext context, string route) =>
+        {
+            if (overrides is null || !overrides.TryGet(route, out var filePath) || !File.Exists(filePath))
+            {
+                context.Response.StatusCode = 404;
+                return;
+            }
+            context.Response.ContentType = ContentTypeFor(filePath);
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.AccessControlAllowOrigin = "*";
+            await context.Response.SendFileAsync(filePath, context.RequestAborted);
+        });
+
         await app.StartAsync(ct);
         _app = app;
     }
@@ -84,14 +100,19 @@ public sealed class TriggerServer(
         await context.Response.WriteAsync(": connected\n\n", context.RequestAborted);
         await context.Response.Body.FlushAsync(context.RequestAborted);
 
+        // Replay active css overrides so freshly opened tabs self-heal — the app served them
+        // stale (pre-round) CSS, and only already-connected tabs saw the original update-css.
+        if (overrides is not null)
+        {
+            foreach (var route in overrides.Routes)
+                await WriteEventAsync(context, SseEvent.CssUpdate(route, AssetUrl(route)), context.RequestAborted);
+        }
+
         var channel = reloadService.Register();
         try
         {
             await foreach (var evt in channel.Reader.ReadAllAsync(context.RequestAborted))
-            {
-                await context.Response.WriteAsync($"event: {evt}\ndata: {{}}\n\n", context.RequestAborted);
-                await context.Response.Body.FlushAsync(context.RequestAborted);
-            }
+                await WriteEventAsync(context, evt, context.RequestAborted);
         }
         catch (OperationCanceledException) { }
         finally
@@ -99,6 +120,24 @@ public sealed class TriggerServer(
             reloadService.Unregister(channel);
         }
     }
+
+    private static async Task WriteEventAsync(HttpContext context, SseEvent evt, CancellationToken ct)
+    {
+        await context.Response.WriteAsync(FormatSse(evt), ct);
+        await context.Response.Body.FlushAsync(ct);
+    }
+
+    public static string FormatSse(SseEvent evt) => $"event: {evt.Name}\ndata: {evt.JsonData}\n\n";
+
+    public string AssetUrl(string route) => $"http://127.0.0.1:{config.Server.Port}/asset/{route}";
+
+    private static string ContentTypeFor(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
+    {
+        ".css" => "text/css",
+        ".js" or ".mjs" => "application/javascript",
+        ".map" or ".json" => "application/json",
+        _ => "application/octet-stream",
+    };
 
     private static readonly JsonSerializerOptions StatusJsonOptions = new()
     {
@@ -133,6 +172,9 @@ public sealed class TriggerServer(
         // Non-empty = a step output (e.g. tailwind's app.css) was rewritten after the build;
         // browsers are getting broken/stale CSS until the next round
         StaleAssets = sentinel?.StaleFiles ?? [],
+        // Routes currently served by the watcher instead of the app (active css fast-path
+        // overrides; cleared by the next full round)
+        CssOverrides = overrides?.Routes ?? [],
     };
 
     /// <summary>

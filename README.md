@@ -82,9 +82,15 @@ See `samples/sra/claude-watch.json` for a full example. Notable knobs:
   runs the asset build itself each round.
 - `classify.exclude` — files that never trigger a rebuild (**include your app's runtime-write
   dirs** like `App_Data/**`, plus `bin`, `obj`, generated CSS, docs).
-- `classify.cssFastPath` — opt-in: rounds touching only `classify.cssOnly` files run pre-build
-  steps + browser reload without an app restart. Off by default: apps using `MapStaticAssets()`
-  serve build-time-fingerprinted assets and may not pick up files rewritten after build.
+- `classify.cssFastPath` — rounds touching only `classify.cssOnly` files (keep these to
+  tailwind inputs: `tailwind.input.css`, `tailwind.config.js`) skip the entire
+  stop→build→restart cycle: the CSS build runs, and open tabs **hot-swap the stylesheet in
+  place** — no reload, the Blazor circuit stays alive, UI state survives. Because
+  `MapStaticAssets()` can only serve build-time-fingerprinted content, the fresh CSS is served
+  **by the watcher** (`/asset/{route}`, from `preBuildSteps[].route`) and tabs swap their
+  `<link>` to it; new tabs are healed on SSE connect (active overrides are replayed). The next
+  full round rebuilds, clears the overrides (`cssOverrides` in `/status`), and returns tabs to
+  app-served CSS. Requires a pre-build step with both `output` and `route`.
 - `run.readiness` — stdout regex and/or probe URL that mark the app as up.
 - `fallbackWatch` — filesystem watching with two modes:
   - `"mode": "journal"` (recommended alongside hooks): changes only feed the change journal;
