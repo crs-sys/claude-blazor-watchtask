@@ -20,7 +20,8 @@ public sealed class TriggerServer(
     IAppSupervisor supervisor,
     BrowserReloadService reloadService,
     AssetSyncSentinel? sentinel = null,
-    AssetOverrideStore? overrides = null)
+    AssetOverrideStore? overrides = null,
+    AgentActivityTracker? agentActivity = null)
 {
     private WebApplication? _app;
 
@@ -33,15 +34,27 @@ public sealed class TriggerServer(
         var app = builder.Build();
 
         // Hooks pipe Claude's stdin JSON straight through; extract file paths server-side.
+        // Matcher is "*": every tool call pings agent activity (so hybrid file-watch mode knows
+        // a turn is in flight even during long tool-only stretches); edit payloads also journal.
         app.MapPost("/hook/post-tool-use", async context =>
         {
+            agentActivity?.MarkActivity();
             foreach (var path in await ExtractFilePathsAsync(context.Request.Body))
                 journal.Add(path);
             context.Response.StatusCode = 200;
         });
 
+        // UserPromptSubmit: a turn started — agent is busy until Stop.
+        app.MapPost("/hook/prompt", context =>
+        {
+            agentActivity?.MarkBusy();
+            context.Response.StatusCode = 200;
+            return Task.CompletedTask;
+        });
+
         app.MapPost("/hook/stop", async context =>
         {
+            agentActivity?.MarkIdle();
             var sessionId = await ExtractSessionIdAsync(context.Request.Body);
             pipeline.Post(new Trigger(TriggerKind.ClaudeStop, sessionId));
             context.Response.StatusCode = 200;
@@ -105,7 +118,7 @@ public sealed class TriggerServer(
         if (overrides is not null)
         {
             foreach (var route in overrides.Routes)
-                await WriteEventAsync(context, SseEvent.CssUpdate(route, AssetUrl(route)), context.RequestAborted);
+                await WriteEventAsync(context, SseEvent.CssUpdate(route, AssetUrl(route), replay: true), context.RequestAborted);
         }
 
         var channel = reloadService.Register();
@@ -175,6 +188,7 @@ public sealed class TriggerServer(
         // Routes currently served by the watcher instead of the app (active css fast-path
         // overrides; cleared by the next full round)
         CssOverrides = overrides?.Routes ?? [],
+        AgentBusy = agentActivity?.IsBusy(TimeSpan.FromSeconds(config.FallbackWatch.AgentIdleTimeoutSec)) ?? false,
     };
 
     /// <summary>

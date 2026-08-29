@@ -58,8 +58,9 @@ static async Task<int> RunWatcherAsync(Dictionary<string, string> options)
     using var supervisor = new AppSupervisor(config);
     using var sentinel = new AssetSyncSentinel(config);
     var overrides = new AssetOverrideStore();
+    var agentActivity = new AgentActivityTracker();
     var pipeline = new Pipeline(config, journal, new StepRunner(config), new BuildRunner(config), supervisor, reloadService, sentinel, overrides);
-    var server = new TriggerServer(config, journal, pipeline, supervisor, reloadService, sentinel, overrides);
+    var server = new TriggerServer(config, journal, pipeline, supervisor, reloadService, sentinel, overrides, agentActivity);
 
     try { await server.StartAsync(shutdown.Token); }
     catch (Exception ex) when (ex is IOException or InvalidOperationException)
@@ -69,7 +70,7 @@ static async Task<int> RunWatcherAsync(Dictionary<string, string> options)
     }
 
     using var fallback = config.FallbackWatch.Enabled || options.ContainsKey("--watch")
-        ? new FallbackWatcher(config, journal, pipeline)
+        ? new FallbackWatcher(config, journal, pipeline, agentActivity)
         : null;
     fallback?.Start();
 

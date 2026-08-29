@@ -48,16 +48,23 @@ public static class ProcessUtil
 {
     public static ProcessStartInfo Create(WatchConfig.CommandConfig cmd, WatchConfig config)
     {
+        var workingDir = config.ResolvePath(cmd.WorkingDir);
         var psi = new ProcessStartInfo
         {
-            WorkingDirectory = config.ResolvePath(cmd.WorkingDir),
+            WorkingDirectory = workingDir,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+        if (!cmd.InheritEnv) psi.Environment.Clear();
+        foreach (var (key, value) in cmd.Env) psi.Environment[key] = value;
 
         var resolved = ResolveCommand(cmd.Command);
+        // A relative path with separators (e.g. "bin/Debug/net10.0/Sra.exe") is meant relative
+        // to the command's workingDir, not the watcher's cwd
+        if (!Path.IsPathRooted(resolved) && (resolved.Contains('/') || resolved.Contains('\\')))
+            resolved = Path.GetFullPath(resolved, workingDir);
         var ext = Path.GetExtension(resolved);
         if (OperatingSystem.IsWindows() &&
             (ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase) ||

@@ -67,6 +67,17 @@ A ready-made config for SraServiceStack is in `samples/sra/claude-watch.json`.
 `claude-watch status` queries a running watcher and exits 0 (build ok + app running),
 1 (build failed / app down), or 2 (no watcher reachable) — scriptable from Claude skills.
 
+## In-browser feedback
+
+Tabs connected to the watcher (via the reload script) get live round feedback:
+
+- **Building**: the tab title animates (`☱ ☲ ☴` prefix) while a round is running.
+- **Failure**: a click-to-dismiss full-screen overlay lists the parsed build errors
+  (file/line/code/message), and the title gets a `❌` prefix — visible even though the app
+  itself is down. Cleared automatically when the next round starts.
+- **Success**: an animated checkmark toast appears for ~2s after a css hot-swap or a
+  round-driven reload (not when a fresh tab merely self-heals an override).
+
 ## Config reference
 
 See `samples/sra/claude-watch.json` for a full example. Notable knobs:
@@ -92,11 +103,17 @@ See `samples/sra/claude-watch.json` for a full example. Notable knobs:
   full round rebuilds, clears the overrides (`cssOverrides` in `/status`), and returns tabs to
   app-served CSS. Requires a pre-build step with both `output` and `route`.
 - `run.readiness` — stdout regex and/or probe URL that mark the app as up.
-- `fallbackWatch` — filesystem watching with two modes:
-  - `"mode": "journal"` (recommended alongside hooks): changes only feed the change journal;
-    rounds still trigger on the Claude Stop hook. This catches edits made by **scripts**
-    (python, sed, node workflows like br-edit.js) that bypass the Edit/Write tool hooks —
-    without it, a scripted-edit turn classifies as "no relevant changes" and skips.
+- `fallbackWatch` — filesystem watching with three modes:
+  - `"mode": "hybrid"` (recommended alongside hooks): changes feed the change journal, and
+    **editor/hand edits self-trigger** after `quietPeriodSec` of quiet — but the trigger is
+    **held while a Claude turn is in flight**, so the Stop-hook round picks the edits up
+    instead of rebuilding mid-turn. Turn detection: the UserPromptSubmit hook marks busy,
+    every PostToolUse (matcher `*`) refreshes activity, Stop marks idle;
+    `agentIdleTimeoutSec` (default 180) releases the hold after an interrupted turn where
+    Stop never fires. `/status` exposes `agentBusy`.
+  - `"mode": "journal"`: changes only feed the journal; rounds trigger exclusively on the
+    Claude Stop hook. Catches edits made by **scripts** (python, sed, node workflows like
+    br-edit.js) that bypass the Edit/Write tool hooks.
   - `"mode": "trigger"` (hook-free): a quiet-period debounce after changes triggers the
     round (rebuild only after N seconds of no changes). Also enabled by the `--watch` flag.
 

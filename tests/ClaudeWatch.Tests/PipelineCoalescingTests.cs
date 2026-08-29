@@ -45,8 +45,16 @@ public class PipelineCoalescingTests
     {
         public int Broadcasts;
         public int CssBroadcasts;
+        public int BuildingBroadcasts;
+        public List<BuildError> ErrorsBroadcast = [];
         public int Broadcast() { Broadcasts++; return 1; }
         public int BroadcastCssUpdate(string route, string url) { CssBroadcasts++; return 1; }
+        public int BroadcastBuilding(int round) { BuildingBroadcasts++; return 1; }
+        public int BroadcastBuildError(int round, IEnumerable<BuildError> errors)
+        {
+            ErrorsBroadcast.AddRange(errors);
+            return 1;
+        }
     }
 
     private static WatchConfig TestConfig() => new()

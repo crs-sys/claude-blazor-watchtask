@@ -4,14 +4,15 @@
   "server": { "port": 43617 },
   "build": {
     "command": "dotnet",
-    "args": ["build", "Sra.sln", "-v", "q", "--nologo"],
-    "workingDir": "."
+    "args": ["build", "Sra/Sra.csproj", "-v", "q", "--nologo", "--no-restore", "-p:RunAnalyzers=false"],
+    "workingDir": ".",
+    "env": { "DOTNET_CLI_USE_MSBUILD_SERVER": "1" }
   },
   "preBuildSteps": [
     {
       "name": "tailwind",
-      "command": "npm",
-      "args": ["run", "ui:build"],
+      "command": "node",
+      "args": ["node_modules/@tailwindcss/cli/dist/index.mjs", "-i", "./tailwind.input.css", "-o", "./wwwroot/css/app.css", "--minify"],
       "workingDir": "Sra",
       "when": ["**/*.razor", "**/*.html", "Sra/tailwind.input.css", "Sra/tailwind.config.js"],
       "output": "Sra/wwwroot/css/app.css",
@@ -20,10 +21,13 @@
     }
   ],
   "run": {
-    "command": "dotnet",
-    "args": ["run", "--project", "Sra", "--launch-profile", "https", "--no-build"],
-    "workingDir": ".",
-    "env": { "ASPNETCORE_ENVIRONMENT": "Development" },
+    "command": "bin/Debug/net10.0/Sra.exe",
+    "args": [],
+    "workingDir": "Sra",
+    "env": {
+      "ASPNETCORE_ENVIRONMENT": "Development",
+      "ASPNETCORE_URLS": "https://localhost:5001;http://localhost:5000"
+    },
     "inheritEnv": true,
     "requiredEnv": ["SERVICESTACK_LICENSE"],
     "readiness": {
@@ -54,8 +58,9 @@
   "browserReload": { "enabled": true },
   "fallbackWatch": {
     "enabled": true,
-    "mode": "journal",
+    "mode": "hybrid",
     "paths": ["Sra", "Sra.ServiceModel", "Sra.ServiceInterface", "Sra.Data", "Sra.BrIO", "external"],
-    "quietPeriodSec": 20
+    "quietPeriodSec": 1,
+    "agentIdleTimeoutSec": 180
   }
 }

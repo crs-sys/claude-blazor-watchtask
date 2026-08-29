@@ -1,12 +1,19 @@
 namespace ClaudeWatch;
 
 /// <summary>
-/// FileSystemWatcher over configured paths, feeding the same change journal. Two modes:
+/// FileSystemWatcher over configured paths, feeding the same change journal. Modes:
 /// "journal" — only journals changes (the Claude Stop hook still decides when to rebuild);
 /// catches edits made by scripts that bypass the Edit/Write tool hooks.
+/// "hybrid" — journal + self-trigger for editor edits, but the trigger is HELD while a Claude
+/// turn is in flight (the Stop-hook round picks the edits up instead); re-checked every quiet
+/// period until the agent goes idle.
 /// "trigger" — hook-free operation: a quiet-period debounce after changes triggers the round.
 /// </summary>
-public sealed class FallbackWatcher(WatchConfig config, ChangeJournal journal, Pipeline pipeline) : IDisposable
+public sealed class FallbackWatcher(
+    WatchConfig config,
+    ChangeJournal journal,
+    Pipeline pipeline,
+    AgentActivityTracker? agentActivity = null) : IDisposable
 {
     private readonly List<FileSystemWatcher> _watchers = [];
     private Timer? _debounce;
@@ -34,13 +41,22 @@ public sealed class FallbackWatcher(WatchConfig config, ChangeJournal journal, P
             watcher.EnableRaisingEvents = true;
             _watchers.Add(watcher);
         }
-        Log.Info(IsJournalMode
-            ? $"file journal active on {_watchers.Count} path(s) — scripted edits are detected; rounds still trigger on Claude Stop"
-            : $"fallback file watch active on {_watchers.Count} path(s), quiet period {config.FallbackWatch.QuietPeriodSec}s");
+        Log.Info(Mode switch
+        {
+            WatchMode.Journal => $"file journal active on {_watchers.Count} path(s) — scripted edits are detected; rounds still trigger on Claude Stop",
+            WatchMode.Hybrid => $"hybrid file watch active on {_watchers.Count} path(s) — editor edits trigger after {config.FallbackWatch.QuietPeriodSec}s quiet, held while the agent is mid-turn",
+            _ => $"fallback file watch active on {_watchers.Count} path(s), quiet period {config.FallbackWatch.QuietPeriodSec}s",
+        });
     }
 
-    private bool IsJournalMode =>
-        config.FallbackWatch.Mode.Equals("journal", StringComparison.OrdinalIgnoreCase);
+    private enum WatchMode { Journal, Hybrid, Trigger }
+
+    private WatchMode Mode => config.FallbackWatch.Mode.ToLowerInvariant() switch
+    {
+        "journal" => WatchMode.Journal,
+        "hybrid" => WatchMode.Hybrid,
+        _ => WatchMode.Trigger,
+    };
 
     private void OnChange(string fullPath)
     {
@@ -49,15 +65,42 @@ public sealed class FallbackWatcher(WatchConfig config, ChangeJournal journal, P
         if (Globs.MatchesAny(normalized, config.Classify.Exclude)) return; // critical: App_Data etc. must not self-trigger
 
         journal.Add(fullPath);
-        if (IsJournalMode) return; // Stop hook decides when to rebuild
+        if (Mode == WatchMode.Journal) return; // Stop hook decides when to rebuild
 
         lock (_lock)
         {
             // restart the quiet-period countdown on every relevant change
             _debounce?.Dispose();
-            _debounce = new Timer(_ => pipeline.Post(new Trigger(TriggerKind.FallbackWatch)),
+            _debounce = new Timer(_ => OnQuietPeriodElapsed(),
                 null, TimeSpan.FromSeconds(config.FallbackWatch.QuietPeriodSec), Timeout.InfiniteTimeSpan);
         }
+    }
+
+    private bool _holdLogged;
+
+    private void OnQuietPeriodElapsed()
+    {
+        if (Mode == WatchMode.Hybrid && agentActivity is not null &&
+            agentActivity.IsBusy(TimeSpan.FromSeconds(config.FallbackWatch.AgentIdleTimeoutSec)))
+        {
+            // A Claude turn is in flight: hold the trigger — its Stop-hook round will pick up
+            // the journaled edits. Re-check in case the turn is interrupted (no Stop fires);
+            // the idle-timeout staleness eventually lets the trigger through.
+            if (!_holdLogged)
+            {
+                _holdLogged = true;
+                Log.Detail("editor changes journaled — agent is mid-turn, holding trigger until it finishes");
+            }
+            lock (_lock)
+            {
+                _debounce?.Dispose();
+                _debounce = new Timer(_ => OnQuietPeriodElapsed(),
+                    null, TimeSpan.FromSeconds(config.FallbackWatch.QuietPeriodSec), Timeout.InfiniteTimeSpan);
+            }
+            return;
+        }
+        _holdLogged = false;
+        pipeline.Post(new Trigger(TriggerKind.FallbackWatch));
     }
 
     public void Dispose()

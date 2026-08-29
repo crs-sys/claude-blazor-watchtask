@@ -100,13 +100,25 @@ public static class InitCommand
 
     public static JsonObject BuildHooksJson(int port) => new()
     {
+        // matcher "*": every tool call pings agent activity (hybrid file-watch mode holds
+        // editor-edit triggers while a turn is in flight); edit payloads also journal files.
         ["PostToolUse"] = new JsonArray(new JsonObject
         {
-            ["matcher"] = "Edit|Write|MultiEdit|NotebookEdit",
+            ["matcher"] = "*",
             ["hooks"] = new JsonArray(new JsonObject
             {
                 ["type"] = "command",
                 ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/post-tool-use >/dev/null 2>&1 || true",
+                ["async"] = true,
+                ["timeout"] = 5,
+            }),
+        }),
+        ["UserPromptSubmit"] = new JsonArray(new JsonObject
+        {
+            ["hooks"] = new JsonArray(new JsonObject
+            {
+                ["type"] = "command",
+                ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/prompt >/dev/null 2>&1 || true",
                 ["async"] = true,
                 ["timeout"] = 5,
             }),

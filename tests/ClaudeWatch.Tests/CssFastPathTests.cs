@@ -63,12 +63,36 @@ public class SseEventTests
     }
 
     [Fact]
-    public void Css_update_event_carries_path_and_url()
+    public void Css_update_event_carries_path_url_and_replay()
     {
         var formatted = TriggerServer.FormatSse(SseEvent.CssUpdate("css/app.css", "http://127.0.0.1:43617/asset/css/app.css"));
         Assert.StartsWith("event: update-css\ndata: ", formatted);
         Assert.Contains("\"path\":\"css/app.css\"", formatted);
         Assert.Contains("\"url\":\"http://127.0.0.1:43617/asset/css/app.css\"", formatted);
+        Assert.Contains("\"replay\":false", formatted);
         Assert.EndsWith("\n\n", formatted);
+
+        var replay = TriggerServer.FormatSse(SseEvent.CssUpdate("css/app.css", "u", replay: true));
+        Assert.Contains("\"replay\":true", replay);
+    }
+
+    [Fact]
+    public void Building_event_carries_round()
+    {
+        var formatted = TriggerServer.FormatSse(SseEvent.Building(7));
+        Assert.Equal("event: building\ndata: {\"round\":7}\n\n", formatted);
+    }
+
+    [Fact]
+    public void Build_error_event_carries_camel_cased_errors()
+    {
+        var errors = new[] { new BuildError(@"C:\repo\Foo.cs", 42, "CS0103", "name does not exist") };
+        var formatted = TriggerServer.FormatSse(SseEvent.BuildError(3, errors));
+        Assert.StartsWith("event: build-error\ndata: ", formatted);
+        Assert.Contains("\"round\":3", formatted);
+        Assert.Contains("\"file\":\"C:\\\\repo\\\\Foo.cs\"", formatted);
+        Assert.Contains("\"line\":42", formatted);
+        Assert.Contains("\"code\":\"CS0103\"", formatted);
+        Assert.Contains("\"message\":\"name does not exist\"", formatted);
     }
 }

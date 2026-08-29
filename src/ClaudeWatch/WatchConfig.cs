@@ -28,6 +28,8 @@ public sealed class WatchConfig
         public string Command { get; set; } = "";
         public List<string> Args { get; set; } = [];
         public string WorkingDir { get; set; } = ".";
+        public Dictionary<string, string> Env { get; set; } = [];
+        public bool InheritEnv { get; set; } = true;
     }
 
     public sealed class PreBuildStep : CommandConfig
@@ -53,8 +55,6 @@ public sealed class WatchConfig
 
     public sealed class RunConfig : CommandConfig
     {
-        public Dictionary<string, string> Env { get; set; } = [];
-        public bool InheritEnv { get; set; } = true;
         public List<string> RequiredEnv { get; set; } = [];
         public ReadinessConfig Readiness { get; set; } = new();
         public string? AppUrl { get; set; }
@@ -86,12 +86,18 @@ public sealed class WatchConfig
         /// <summary>
         /// "journal": filesystem changes only feed the change journal — rounds are still
         /// triggered by the Claude Stop hook. Catches edits made by scripts (python, node,
-        /// sed, br-edit.js) that bypass the Edit/Write tool hooks. Recommended alongside hooks.
+        /// sed, br-edit.js) that bypass the Edit/Write tool hooks.
+        /// "hybrid" (recommended alongside hooks): like journal, but editor edits also
+        /// self-trigger after the quiet period — held while a Claude turn is in flight, so
+        /// the Stop-hook round picks them up instead of rebuilding mid-turn.
         /// "trigger": hook-free mode — a quiet-period debounce after changes triggers the round.
         /// </summary>
         public string Mode { get; set; } = "trigger";
         public List<string> Paths { get; set; } = [];
-        public int QuietPeriodSec { get; set; } = 20;
+        public int QuietPeriodSec { get; set; } = 1;
+        /// <summary>Hybrid mode: treat the agent as idle after this long without any hook traffic
+        /// (covers interrupted turns, where the Stop hook never fires).</summary>
+        public int AgentIdleTimeoutSec { get; set; } = 180;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

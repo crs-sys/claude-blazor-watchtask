@@ -52,9 +52,7 @@ public sealed class AppSupervisor(WatchConfig config, bool echoAppOutput = true)
     {
         await StopAsync();
 
-        var psi = ProcessUtil.Create(config.Run, config);
-        if (!config.Run.InheritEnv) psi.Environment.Clear();
-        foreach (var (key, value) in config.Run.Env) psi.Environment[key] = value;
+        var psi = ProcessUtil.Create(config.Run, config); // env/inheritEnv applied there
         psi.Environment["CLAUDE_WATCH_PORT"] = config.Server.Port.ToString();
 
         var readyRegex = new Regex(config.Run.Readiness.StdoutRegex, RegexOptions.IgnoreCase);

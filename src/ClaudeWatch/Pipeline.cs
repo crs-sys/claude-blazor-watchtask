@@ -77,10 +77,13 @@ public sealed class Pipeline(
             // the post-build file correctly under MapStaticAssets, so the watcher serves it
             // (asset override) until the next full round makes file and manifest consistent.
             State = WatchState.Building;
+            reloadBroadcaster.BroadcastBuilding(Round);
             if (!await RunMatchingStepsAsync(plan, forceAll: false, ct))
             {
                 // app is still running with pre-round CSS — degraded, not down
                 State = supervisor.IsRunning ? WatchState.Ready : State;
+                reloadBroadcaster.BroadcastBuildError(Round,
+                    [new BuildError("(css round)", 0, "STEP", "CSS build step failed — app still running with previous CSS")]);
                 Log.Error("css-only round failed — app still running with previous CSS (R to force a full round)");
                 return false;
             }
@@ -101,6 +104,7 @@ public sealed class Pipeline(
 
         // Full round: stop BEFORE build — the running app locks its output DLLs
         State = WatchState.Building;
+        reloadBroadcaster.BroadcastBuilding(Round);
         if (supervisor.IsRunning)
         {
             Log.Detail($"stopping app (pid {supervisor.Pid})...");
@@ -111,6 +115,8 @@ public sealed class Pipeline(
         if (!await RunMatchingStepsAsync(plan, forceAllSteps, ct))
         {
             State = WatchState.BuildFailed;
+            reloadBroadcaster.BroadcastBuildError(Round,
+                [new BuildError("(pre-build step)", 0, "STEP", "A pre-build step failed — app is down; see watcher console")]);
             Log.Error("BUILD FAILED (pre-build step) — app is DOWN — waiting for next trigger (R to retry)");
             return false;
         }
@@ -121,6 +127,10 @@ public sealed class Pipeline(
         if (!build.Success)
         {
             State = WatchState.BuildFailed;
+            var reported = build.Errors.Count > 0
+                ? build.Errors
+                : [new BuildError("(build)", 0, "BUILD", "Build failed — see watcher console for output")];
+            reloadBroadcaster.BroadcastBuildError(Round, reported);
             Log.Error($"build failed in {build.Duration.TotalSeconds:0.0}s:");
             if (build.Errors.Count > 0)
                 foreach (var e in build.Errors.Take(15))
@@ -141,6 +151,8 @@ public sealed class Pipeline(
         if (failure is not null)
         {
             State = WatchState.AppCrashed;
+            reloadBroadcaster.BroadcastBuildError(Round,
+                [new BuildError("(app start)", 0, "START", $"App failed to start: {failure}")]);
             Log.Error($"app failed to start: {failure}");
             foreach (var line in supervisor is AppSupervisor s ? s.OutputTail : []) Log.App(line);
             return false;
