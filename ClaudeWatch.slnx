@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ClaudeWatch/ClaudeWatch.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ClaudeWatch.Tests/ClaudeWatch.Tests.csproj" />
+  </Folder>
+</Solution>

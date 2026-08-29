@@ -1,0 +1,60 @@
+{
+  "name": "SraServiceStack",
+  "repoRoot": "C:\\Users\\chris\\Projects\\SraServiceStack",
+  "server": { "port": 43617 },
+  "build": {
+    "command": "dotnet",
+    "args": ["build", "Sra.sln", "-v", "q", "--nologo"],
+    "workingDir": "."
+  },
+  "preBuildSteps": [
+    {
+      "name": "tailwind",
+      "command": "npm",
+      "args": ["run", "ui:build"],
+      "workingDir": "Sra",
+      "when": ["**/*.razor", "**/*.html", "Sra/tailwind.input.css", "Sra/tailwind.config.js"],
+      "output": "Sra/wwwroot/css/app.css",
+      "timeoutSec": 120
+    }
+  ],
+  "run": {
+    "command": "dotnet",
+    "args": ["run", "--project", "Sra", "--launch-profile", "https", "--no-build"],
+    "workingDir": ".",
+    "env": { "ASPNETCORE_ENVIRONMENT": "Development" },
+    "inheritEnv": true,
+    "requiredEnv": ["SERVICESTACK_LICENSE"],
+    "readiness": {
+      "stdoutRegex": "Now listening on:|Application is running",
+      "probeUrl": "https://localhost:5001",
+      "timeoutSec": 60
+    },
+    "appUrl": "https://localhost:5001",
+    "killOrphansOnPorts": [5001, 5000]
+  },
+  "classify": {
+    "exclude": [
+      "**/App_Data/**",
+      "**/bin/**",
+      "**/obj/**",
+      "**/node_modules/**",
+      "Sra/wwwroot/css/app.css",
+      "publish/**",
+      "**/.playwright-*/**",
+      ".claude/**",
+      "**/*.md",
+      "agile-artifacts/**",
+      "docs/**"
+    ],
+    "cssOnly": ["Sra/tailwind.input.css", "Sra/wwwroot/**"],
+    "cssFastPath": false
+  },
+  "browserReload": { "enabled": true },
+  "fallbackWatch": {
+    "enabled": true,
+    "mode": "journal",
+    "paths": ["Sra", "Sra.ServiceModel", "Sra.ServiceInterface", "Sra.Data", "Sra.BrIO", "external"],
+    "quietPeriodSec": 20
+  }
+}
