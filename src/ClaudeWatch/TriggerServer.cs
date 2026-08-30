@@ -181,6 +181,18 @@ public sealed class TriggerServer(
         PendingChanges = journal.Peek(),
         LastRoundFiles = pipeline.LastRoundFileCount,
         LastRoundSkipped = pipeline.LastRoundSkipped,
+        // Wall-clock breakdown of the last executed round (failed rounds included) —
+        // shows whether time goes to stop, pre-build steps, build, or app start+readiness
+        LastRoundTimings = pipeline.LastRoundTimings is { } t
+            ? new
+            {
+                t.Round,
+                t.Kind,
+                t.Succeeded,
+                t.TotalMs,
+                Phases = t.Phases.Select(p => new { p.Name, p.Ms }),
+            }
+            : null,
         ReloadClients = reloadService.ClientCount,
         // Non-empty = a step output (e.g. tailwind's app.css) was rewritten after the build;
         // browsers are getting broken/stale CSS until the next round

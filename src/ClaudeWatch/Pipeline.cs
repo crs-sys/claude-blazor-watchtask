@@ -5,6 +5,11 @@ namespace ClaudeWatch;
 
 public enum WatchState { Starting, Ready, Building, Restarting, BuildFailed, AppCrashed, ShuttingDown }
 
+public sealed record PhaseTiming(string Name, long Ms);
+
+/// <summary>Per-phase wall-clock breakdown of the last executed round (failed rounds included).</summary>
+public sealed record RoundTimings(int Round, string Kind, bool Succeeded, long TotalMs, IReadOnlyList<PhaseTiming> Phases);
+
 /// <summary>
 /// The single consumer of the trigger channel. Owns all app/build state transitions,
 /// so overlapping triggers can never interleave pipeline stages.
@@ -26,6 +31,7 @@ public sealed class Pipeline(
     public BuildResult? LastBuild { get; private set; }
     public int LastRoundFileCount { get; private set; }
     public bool LastRoundSkipped { get; private set; }
+    public RoundTimings? LastRoundTimings { get; private set; }
 
     public void Post(Trigger trigger) => _triggers.Writer.TryWrite(trigger);
 
@@ -69,7 +75,24 @@ public sealed class Pipeline(
     private async Task<bool> ExecuteRoundAsync(RoundPlan plan, Trigger trigger, CancellationToken ct)
     {
         var roundWatch = Stopwatch.StartNew();
+        var phases = new List<PhaseTiming>();
+        var ok = false;
+        try
+        {
+            ok = await ExecuteRoundCoreAsync(plan, trigger, roundWatch, phases, ct);
+            return ok;
+        }
+        finally
+        {
+            // Recorded even for failed rounds so /status shows where the time went
+            LastRoundTimings = new RoundTimings(Round, plan.Kind == PlanKind.CssOnly ? "css-only" : "full",
+                ok, roundWatch.ElapsedMilliseconds, phases);
+        }
+    }
 
+    private async Task<bool> ExecuteRoundCoreAsync(
+        RoundPlan plan, Trigger trigger, Stopwatch roundWatch, List<PhaseTiming> phases, CancellationToken ct)
+    {
         if (plan.Kind == PlanKind.CssOnly)
         {
             // Fast path (opt-in via classify.cssFastPath): rebuild CSS and hot-swap it in open
@@ -78,7 +101,7 @@ public sealed class Pipeline(
             // (asset override) until the next full round makes file and manifest consistent.
             State = WatchState.Building;
             reloadBroadcaster.BroadcastBuilding(Round);
-            if (!await RunMatchingStepsAsync(plan, forceAll: false, ct))
+            if (!await RunMatchingStepsAsync(plan, forceAll: false, phases, ct))
             {
                 // app is still running with pre-round CSS — degraded, not down
                 State = supervisor.IsRunning ? WatchState.Ready : State;
@@ -98,7 +121,7 @@ public sealed class Pipeline(
             }
             sentinel?.CaptureAfterBuild(); // the rewrite was ours — don't flag it stale
             State = supervisor.IsRunning ? WatchState.Ready : State;
-            Log.Success($"READY  round {Round} css-only in {roundWatch.Elapsed.TotalSeconds:0.0}s — css hot-swapped ({swapped} client{(swapped == 1 ? "" : "s")}, no restart)");
+            Log.Success($"READY  round {Round} css-only in {roundWatch.Elapsed.TotalSeconds:0.0}s [{Breakdown(phases)}] — css hot-swapped ({swapped} client{(swapped == 1 ? "" : "s")}, no restart)");
             return true;
         }
 
@@ -108,11 +131,13 @@ public sealed class Pipeline(
         if (supervisor.IsRunning)
         {
             Log.Detail($"stopping app (pid {supervisor.Pid})...");
+            var stopWatch = Stopwatch.StartNew();
             await supervisor.StopAsync();
+            phases.Add(new PhaseTiming("stop", stopWatch.ElapsedMilliseconds));
         }
 
         var forceAllSteps = trigger.Kind == TriggerKind.Manual;
-        if (!await RunMatchingStepsAsync(plan, forceAllSteps, ct))
+        if (!await RunMatchingStepsAsync(plan, forceAllSteps, phases, ct))
         {
             State = WatchState.BuildFailed;
             reloadBroadcaster.BroadcastBuildError(Round,
@@ -123,6 +148,7 @@ public sealed class Pipeline(
 
         Log.Detail("dotnet build...");
         var build = await buildRunner.BuildAsync(ct);
+        phases.Add(new PhaseTiming("build", (long)build.Duration.TotalMilliseconds));
         LastBuild = build;
         if (!build.Success)
         {
@@ -148,6 +174,7 @@ public sealed class Pipeline(
         Log.Detail("starting app...");
         var startWatch = Stopwatch.StartNew();
         var failure = await supervisor.StartAsync(ct);
+        phases.Add(new PhaseTiming("start", startWatch.ElapsedMilliseconds)); // spawn + readiness probe
         if (failure is not null)
         {
             State = WatchState.AppCrashed;
@@ -162,12 +189,15 @@ public sealed class Pipeline(
         var clients = config.BrowserReload.Enabled ? reloadBroadcaster.Broadcast() : 0;
         Log.Success(
             $"READY  round {Round} done in {roundWatch.Elapsed.TotalSeconds:0.0}s " +
-            $"(app up in {startWatch.Elapsed.TotalSeconds:0.0}s, pid {supervisor.Pid}" +
+            $"[{Breakdown(phases)}] (pid {supervisor.Pid}" +
             (clients > 0 ? $", reload sent to {clients} client{(clients == 1 ? "" : "s")})" : ")"));
         return true;
     }
 
-    private async Task<bool> RunMatchingStepsAsync(RoundPlan plan, bool forceAll, CancellationToken ct)
+    private static string Breakdown(IEnumerable<PhaseTiming> phases) =>
+        string.Join(" · ", phases.Select(p => $"{p.Name} {p.Ms / 1000.0:0.0}s"));
+
+    private async Task<bool> RunMatchingStepsAsync(RoundPlan plan, bool forceAll, List<PhaseTiming> phases, CancellationToken ct)
     {
         foreach (var step in config.PreBuildSteps)
         {
@@ -181,7 +211,9 @@ public sealed class Pipeline(
             }
             Log.Detail($"step '{step.Name}'...");
             var stepWatch = Stopwatch.StartNew();
-            if (!await stepRunner.RunAsync(step, ct)) return false;
+            var stepOk = await stepRunner.RunAsync(step, ct);
+            phases.Add(new PhaseTiming(step.Name, stepWatch.ElapsedMilliseconds));
+            if (!stepOk) return false;
             Log.Detail($"step '{step.Name}' done in {stepWatch.Elapsed.TotalSeconds:0.0}s");
         }
         return true;

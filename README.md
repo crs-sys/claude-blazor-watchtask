@@ -60,7 +60,7 @@ A ready-made config for SraServiceStack is in `samples/sra/claude-watch.json`.
 | `POST /changed` | `{"file_path": "..."}` → journal a file manually |
 | `POST /trigger` | Trigger a round (journal-classified) |
 | `POST /force` | Force a full rebuild round |
-| `GET /status` | State, round, app pid, last build result with parsed errors, pending changes |
+| `GET /status` | State, round, app pid, last build result with parsed errors, pending changes, per-phase timing of the last round (`lastRoundTimings`: stop / each pre-build step / build / start) |
 | `GET /events` | SSE stream; emits `reload` after each successful restart |
 | `GET /claude-watch-reload.js` | Browser reload client (referenced by the App.razor snippet) |
 

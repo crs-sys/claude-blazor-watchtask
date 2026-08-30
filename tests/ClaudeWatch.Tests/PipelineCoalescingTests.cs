@@ -70,6 +70,14 @@ public class PipelineCoalescingTests
             await Task.Delay(10);
     }
 
+    // Timings are assigned in a finally after the round's counters tick — poll for them separately
+    private static async Task WaitForTimingsAsync(Pipeline pipeline, int round)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (pipeline.LastRoundTimings?.Round != round && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+    }
+
     [Fact]
     public async Task Burst_of_stop_triggers_coalesces_into_one_round()
     {
@@ -153,6 +161,12 @@ public class PipelineCoalescingTests
         Assert.Equal(["css/app.css"], overrides.Routes);
         Assert.Equal(WatchState.Ready, pipeline.State);
 
+        await WaitForTimingsAsync(pipeline, round: 1);
+        Assert.Equal("css-only", pipeline.LastRoundTimings!.Kind);
+        Assert.True(pipeline.LastRoundTimings.Succeeded);
+        Assert.Contains(pipeline.LastRoundTimings.Phases, p => p.Name == "tailwind");
+        Assert.DoesNotContain(pipeline.LastRoundTimings.Phases, p => p.Name is "build" or "start" or "stop");
+
         journal.Add(Path.Combine(config.RepoRoot, "Foo.cs"));
         pipeline.Post(new Trigger(TriggerKind.ClaudeStop));
         await DrainRoundsAsync(pipeline, builds, expectedBuilds: 2); // full round
@@ -191,5 +205,43 @@ public class PipelineCoalescingTests
 
         Assert.Equal(3, builds.Builds);
         Assert.Equal(WatchState.Ready, pipeline.State);
+    }
+
+    [Fact]
+    public async Task Round_timings_record_phase_breakdown_for_success_and_failure()
+    {
+        var config = TestConfig();
+        var journal = new ChangeJournal(config.RepoRoot);
+        var builds = new FakeBuildRunner();
+        builds.Outcomes.Enqueue(true);   // initial round
+        builds.Outcomes.Enqueue(false);  // round 1 fails
+        var supervisor = new FakeSupervisor();
+        var pipeline = new Pipeline(config, journal, new FakeStepRunner(), builds, supervisor, new FakeBroadcaster());
+
+        using var cts = new CancellationTokenSource();
+        var run = pipeline.RunAsync(cts.Token);
+        await DrainRoundsAsync(pipeline, builds, expectedBuilds: 1);
+        await WaitForTimingsAsync(pipeline, round: 0);
+
+        var initial = pipeline.LastRoundTimings!;
+        Assert.Equal("full", initial.Kind);
+        Assert.True(initial.Succeeded);
+        Assert.Contains(initial.Phases, p => p.Name == "build");
+        Assert.Contains(initial.Phases, p => p.Name == "start");
+        Assert.DoesNotContain(initial.Phases, p => p.Name == "stop"); // nothing was running yet
+
+        journal.Add(Path.Combine(config.RepoRoot, "Foo.cs"));
+        pipeline.Post(new Trigger(TriggerKind.ClaudeStop));
+        await DrainRoundsAsync(pipeline, builds, expectedBuilds: 2);
+        await WaitForTimingsAsync(pipeline, round: 1);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+
+        var failed = pipeline.LastRoundTimings!;
+        Assert.Equal(1, failed.Round);
+        Assert.False(failed.Succeeded);
+        Assert.Contains(failed.Phases, p => p.Name == "stop");   // app was up from the initial round
+        Assert.Contains(failed.Phases, p => p.Name == "build");  // where the failure happened
+        Assert.DoesNotContain(failed.Phases, p => p.Name == "start");
     }
 }
