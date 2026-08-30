@@ -5,8 +5,8 @@ using System.Text.Json.Nodes;
 namespace ClaudeWatch;
 
 /// <summary>
-/// `claude-watch init [--target <repoDir>] [--port N]` — scaffolds claude-watch.json,
-/// hook scripts under .claude/claude-watch/, and creates/merges .claude/settings.json.
+/// `claude-watch init [--target <repoDir>] [--port N]` — scaffolds claude-watch.json
+/// and creates/merges the Claude Code hooks into .claude/settings.json.
 /// Never overwrites existing files; prints manual-merge instructions instead.
 /// </summary>
 public static class InitCommand
@@ -22,7 +22,6 @@ public static class InitCommand
         Console.WriteLine($"Initializing claude-watch in {target}");
 
         WriteConfigTemplate(target, port);
-        WriteHookScripts(target, port);
         WriteHooksSettings(target, port);
         PrintRazorSnippet();
 
@@ -80,24 +79,6 @@ public static class InitCommand
         Console.WriteLine($"  + claude-watch.json (template — edit the TODOs)");
     }
 
-    private static void WriteHookScripts(string target, int port)
-    {
-        var hookDir = Path.Combine(target, ".claude", "claude-watch");
-        Directory.CreateDirectory(hookDir);
-        foreach (var name in new[] { "notify-stop.ps1", "notify-changed.ps1", "notify-stop.sh", "notify-changed.sh" })
-        {
-            var dest = Path.Combine(hookDir, name);
-            if (File.Exists(dest))
-            {
-                Console.WriteLine($"  = .claude/claude-watch/{name} already exists — left untouched");
-                continue;
-            }
-            var content = TriggerServer.ReadEmbedded(name).Replace("__PORT__", port.ToString());
-            File.WriteAllText(dest, content);
-            Console.WriteLine($"  + .claude/claude-watch/{name}");
-        }
-    }
-
     public static JsonObject BuildHooksJson(int port) => new()
     {
         // matcher "*": every tool call pings agent activity (hybrid file-watch mode holds
@@ -108,7 +89,9 @@ public static class InitCommand
             ["hooks"] = new JsonArray(new JsonObject
             {
                 ["type"] = "command",
-                ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/post-tool-use >/dev/null 2>&1 || true",
+                // `|| exit 0` (not `|| true` / `>/dev/null`) so the command is valid under
+                // both cmd.exe and POSIX sh — Claude Code's hook shell varies by platform.
+                ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/post-tool-use || exit 0",
                 ["async"] = true,
                 ["timeout"] = 5,
             }),
@@ -118,7 +101,7 @@ public static class InitCommand
             ["hooks"] = new JsonArray(new JsonObject
             {
                 ["type"] = "command",
-                ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/prompt >/dev/null 2>&1 || true",
+                ["command"] = $"curl -s -m 1 -X POST --data-binary @- http://127.0.0.1:{port}/hook/prompt || exit 0",
                 ["async"] = true,
                 ["timeout"] = 5,
             }),
@@ -128,7 +111,7 @@ public static class InitCommand
             ["hooks"] = new JsonArray(new JsonObject
             {
                 ["type"] = "command",
-                ["command"] = $"curl -s -m 2 -X POST --data-binary @- http://127.0.0.1:{port}/hook/stop >/dev/null 2>&1 || true",
+                ["command"] = $"curl -s -m 2 -X POST --data-binary @- http://127.0.0.1:{port}/hook/stop || exit 0",
                 ["async"] = true,
                 ["timeout"] = 10,
             }),

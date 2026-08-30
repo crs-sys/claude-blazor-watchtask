@@ -34,13 +34,12 @@ claude-watch init --target C:\path\to\your-repo
 cd C:\path\to\your-repo; claude-watch
 ```
 
-`init` writes `claude-watch.json` (edit the TODOs), hook scripts under `.claude/claude-watch/`,
-and merges the hooks into `.claude/settings.json` (never clobbers existing hooks — prints a
-merge block instead). It also prints a dev-only `<script>` snippet to add to your root
+`init` writes `claude-watch.json` (edit the TODOs) and merges the Claude Code hooks into
+`.claude/settings.json` (never clobbers existing hooks — prints a merge block instead). It also prints a dev-only `<script>` snippet to add to your root
 component (e.g. `Components/App.razor`); the snippet is inert unless the app was launched by
 claude-watch (`CLAUDE_WATCH_PORT` env var).
 
-A ready-made config for SraServiceStack is in `samples/sra/claude-watch.json`.
+A full example config for a Blazor + Tailwind app is in `samples/blazor/claude-watch.json`.
 
 ## Console hotkeys
 
@@ -80,7 +79,7 @@ Tabs connected to the watcher (via the reload script) get live round feedback:
 
 ## Config reference
 
-See `samples/sra/claude-watch.json` for a full example. Notable knobs:
+See `samples/blazor/claude-watch.json` for a full example. Notable knobs:
 
 - `preBuildSteps[].when` — globs; the step runs only when a round touched a matching file.
 - `preBuildSteps[].output` — the file the step produces. The watcher snapshots it after each

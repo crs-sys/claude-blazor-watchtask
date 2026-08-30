@@ -1,7 +1,8 @@
 // claude-watch dev reload client. Served by the watcher; only loaded when the app
 // was launched by claude-watch (CLAUDE_WATCH_PORT env var gates the script include).
 // Title-glyph wait indicator, error overlay, and checkmark toast adapted from
-// dotnet-watch's aspnetcore-browser-refresh.js (MIT, .NET Foundation).
+// dotnet-watch's aspnetcore-browser-refresh.js — Copyright (c) .NET Foundation
+// and Contributors, MIT license; see THIRD-PARTY-NOTICES.txt in the repo root.
 (function () {
   "use strict";
   if (window.__claudeWatchReload) return; // guard against double inclusion

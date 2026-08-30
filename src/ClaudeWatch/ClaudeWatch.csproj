@@ -12,6 +12,7 @@
     <PackageId>ClaudeWatch</PackageId>
     <Version>0.1.0</Version>
     <Description>Claude Code-aware alternative to dotnet watch: rebuilds and restarts a .NET web app once per round of Claude edits, then reloads the browser.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RollForward>LatestMajor</RollForward>
     <InvariantGlobalization>true</InvariantGlobalization>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -23,6 +24,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="assets\**" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
